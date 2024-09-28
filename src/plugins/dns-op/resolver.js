@@ -137,7 +137,7 @@ export default class DNSResolver {
    * @param {Request} ctx.request
    * @param {ArrayBuffer} ctx.requestBodyBuffer
    * @param {Object} ctx.requestDecodedDnsPacket
-   * @param {Object} ctx.userBlocklistInfo
+   * @param {pres.BlockstampInfo} ctx.userBlocklistInfo
    * @param {String} ctx.userDnsResolverUrl
    * @param {string} ctx.userBlockstamp
    * @param {pres.BStamp?} ctx.domainBlockstamp
@@ -151,6 +151,7 @@ export default class DNSResolver {
     const rawpacket = ctx.requestBodyBuffer;
     const decodedpacket = ctx.requestDecodedDnsPacket;
     const userDns = ctx.userDnsResolverUrl;
+    const forceUserDns = this.forceDoh || !util.emptyString(userDns);
     const dispatcher = ctx.dispatcher;
     const userBlockstamp = ctx.userBlockstamp;
     // may be null or empty-obj (stamp then needs to be got from blf)
@@ -212,7 +213,7 @@ export default class DNSResolver {
         this.resolveDnsUpstream(
           rxid,
           req,
-          this.determineDohResolvers(userDns),
+          this.determineDohResolvers(userDns, forceUserDns),
           rawpacket,
           decodedpacket
         ),
@@ -232,6 +233,7 @@ export default class DNSResolver {
     }
 
     // developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/allSettled#return_value
+    /** @type{Response} */
     const res = promisedTasks[1].value;
 
     if (fromMax) {
@@ -251,8 +253,8 @@ export default class DNSResolver {
 
     if (!res.ok) {
       const txt = res.text && (await res.text());
-      this.log.d(rxid, "!OK", res.status, txt);
-      throw new Error(txt + " http err: " + res);
+      this.log.w(rxid, "!OK", res.status, txt);
+      throw new Error(txt + " http err: " + res.status + " " + res.statusText);
     }
 
     const ans = await res.arrayBuffer();
@@ -263,7 +265,7 @@ export default class DNSResolver {
     // check outgoing cached dns-packet against blocklists
     this.blocker.blockAnswer(rxid, /* out*/ r, blInfo);
     const fromCache = cacheutil.hasCacheHeader(res.headers);
-    this.log.d(rxid, "ans block?", r.isBlocked, "from cache?", fromCache);
+    this.log.d(rxid, "ansblock?", r.isBlocked, "fromcache?", fromCache);
 
     // if res was got from caches or if res was got from max doh (ie, blf
     // wasn't used to retrieve stamps), then skip hydrating the cache
@@ -309,7 +311,7 @@ export default class DNSResolver {
     this.log.d(rxid, "primeCache: block?", blocked, "k", k.href);
 
     if (!k) {
-      this.log.d(rxid, "no cache-key, url/query missing?", k, r.stamps);
+      this.log.d(rxid, "primeCache: no key, url/query missing?", k, r.stamps);
       return;
     }
 
